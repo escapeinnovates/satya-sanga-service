@@ -1,51 +1,47 @@
 const express = require("express");
-const {
-    fetchDriveItems,
-    fetchRecursive,
-} = require("../services/drive.service");
+const { listBooks } = require("../services/drive.service");
 const { getCache, setCache } = require("../utils/cache");
 
 const router = express.Router();
 
-router.get("/read-items", async (req, res) => {
+router.get("/books", async (req, res) => {
     try {
-        const { folderId, recursive } = req.query;
+        const { rootFolderId } = req.query;
 
-        if (!folderId) {
+        if (!rootFolderId) {
             return res.status(400).json({
-                message: "folderId is required",
+                message: "rootFolderId is required",
             });
         }
 
-        const cacheKey = recursive === "true"
-            ? `drive:recursive:${folderId}`
-            : `drive:single:${folderId}`;
+        const cacheKey = `drive:books:${rootFolderId}`;
 
-        // 🔍 Cache check
+        // 🔍 Redis cache check
         const cached = await getCache(cacheKey);
         if (cached) {
-            console.log("🔥 Drive cache HIT");
-            return res.json({ files: cached });
+            console.log("🔥 Books cache HIT");
+            // ✅ ALWAYS return items
+            return res.json({ items: cached });
         }
 
-        console.log("🌐 Drive cache MISS → Google API");
+        console.log("🌐 Books cache MISS → Google Drive");
 
-        let files;
-        if (recursive === "true") {
-            files = await fetchRecursive(folderId);
-        } else {
-            files = await fetchDriveItems(folderId);
-        }
+        // 📚 Fetch books
+        const books = await listBooks(rootFolderId);
 
         // ⏱ Cache for 12 hours
-        await setCache(cacheKey, files, 43200);
+        await setCache(cacheKey, books, 43200);
 
-        res.json({ files });
+        console.log("📚 Books:", books);
+
+        // ✅ ALWAYS return items
+        res.json({ items: books });
+
     } catch (err) {
-        console.error("❌ Drive API error:", err.response?.data || err.message);
+        console.error("❌ Books API error:", err.message);
         res.status(500).json({
-            message: "Drive API failed",
-            error: err.response?.data || err.message,
+            message: "Books API failed",
+            error: err.message,
         });
     }
 });

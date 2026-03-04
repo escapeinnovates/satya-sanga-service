@@ -1,31 +1,67 @@
 const express = require("express");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 
 const youtubeRoutes = require("./routes/youtube.routes");
 const driveRoutes = require("./routes/drive.routes");
 const driveAudioRoutes = require("./routes/drive.audio.routes");
-const youtubeShortsRoutes =
-  require("./routes/shorts.routes");
+const youtubeShortsRoutes = require("./routes/shorts.routes");
+const sheetQuotesRoutes = require("./routes/sheets.routes");
+const booksPublicRoutes = require("./routes/books.public.routes");
 
-const sheetQuotesRoutes =
-  require("./routes/sheets.routes");
+const authRoutes = require("./routes/auth.routes");   // NEW
+const usersRoutes = require("./routes/admin/user.routes");
+const announcementsRoutes = require("./routes/admin/announcements.routes");
+const booksRoutes = require("./routes/admin/books.routes");
+const audioManagerRoutes = require("./routes/admin/audioManager.routes");
+const quickSectionroutes = require("./routes/admin/quickSection.routes");
+
 const verifyHmac = require("./middleware/verifyHmac");
-
+const { requireAdmin } = require("./middleware/auth"); // NEW
 
 const app = express();
 
+app.use(cors({
+  origin: "http://localhost:5173", // admin frontend
+  credentials: true
+}));
 
-app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 
 app.use((req, res, next) => {
   console.log(req.path, req.method);
   next();
 });
 
-// 🚨 TEMPORARILY REMOVE rateLimiter
-// app.use(rateLimiter);
-// 🔐 Protect ALL APIs
+
+// ------------------------------
+// 🌍 PUBLIC APP ROUTES (No Auth)
+// ------------------------------
+
+app.use("/api/books", booksPublicRoutes);
+
+
+// ------------------------------
+// 🔐 ADMIN AUTH ROUTES
+// ------------------------------
+
+app.use("/auth", authRoutes);
+
+// Protect everything under /admin
+app.use("/admin/users", usersRoutes);
+app.use("/admin/announcements", requireAdmin, announcementsRoutes);
+app.use("/admin/quotes", requireAdmin, require("./routes/admin/quotes.routes"));
+app.use("/admin/books", requireAdmin, booksRoutes);
+app.use("/admin/audio-manager", requireAdmin, audioManagerRoutes);
+app.use("/admin/quick-section", requireAdmin, quickSectionroutes);
+app.use("/admin/youtube", requireAdmin, require("./routes/admin/youtubeMeta.routes"));
+
+
+// ------------------------------
+// 🔒 HMAC Protected Routes
+// ------------------------------
+
 app.use("/api", verifyHmac);
 
 app.use("/api/sheets", sheetQuotesRoutes);
@@ -33,6 +69,9 @@ app.use("/api/drive", driveRoutes);
 app.use("/api/youtube", youtubeRoutes);
 app.use("/api/drive-audio", driveAudioRoutes);
 app.use("/api/youtube-shorts", youtubeShortsRoutes);
+
+
+// ------------------------------
 
 app.get("/health", (req, res) => {
   res.json({ status: "OK" });

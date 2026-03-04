@@ -13,4 +13,5 @@ module.exports = {
   REDIS_URL: process.env.REDIS_URL,
   GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
   APP_SECRET: process.env.APP_SECRET,
+  CHANNEL_ID: process.env.CHANNEL_ID,
 };

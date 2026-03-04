@@ -1,11 +1,8 @@
-const express = require("express");
 const axios = require("axios");
 const { GOOGLE_API_KEY } = require("../config/env");
 
-
-
 /**
- * 🔹 Internal helper: fetch items from ONE folder
+ * 🔹 Fetch items from ONE folder (folders + images)
  */
 exports.fetchDriveItems = async (folderId) => {
   const res = await axios.get(
@@ -13,8 +10,8 @@ exports.fetchDriveItems = async (folderId) => {
     {
       params: {
         key: GOOGLE_API_KEY,
-        q: `'${folderId}' in parents and (mimeType='application/pdf' or mimeType='application/vnd.google-apps.folder')`,
-        fields: "files(id,name,mimeType,thumbnailLink)",
+        q: `'${folderId}' in parents and (mimeType contains 'image/' or mimeType='application/vnd.google-apps.folder')`,
+        fields: "files(id,name,mimeType)",
         orderBy: "folder,name",
       },
     }
@@ -24,18 +21,49 @@ exports.fetchDriveItems = async (folderId) => {
 };
 
 /**
- * 🔁 Internal helper: recursive fetch (folders + PDFs)
+ * 🔹 Fetch folder metadata (for title)
  */
-exports.fetchRecursive = async (folderId, allItems = []) => {
-  const items = await fetchDriveItems(folderId);
-
-  for (const item of items) {
-    allItems.push(item);
-
-    if (item.mimeType === "application/vnd.google-apps.folder") {
-      await fetchRecursive(item.id, allItems);
+exports.fetchFolderMeta = async (folderId) => {
+  const res = await axios.get(
+    `https://www.googleapis.com/drive/v3/files/${folderId}`,
+    {
+      params: {
+        key: GOOGLE_API_KEY,
+        fields: "id,name",
+      },
     }
+  );
+
+  return res.data;
+};
+
+exports.listBooks = async (rootFolderId) => {
+  const items = await exports.fetchDriveItems(rootFolderId);
+
+  // Only folders are books
+  const folders = items.filter(
+    (i) => i.mimeType === "application/vnd.google-apps.folder"
+  );
+
+  const books = [];
+
+  for (const folder of folders) {
+    const childItems = await exports.fetchDriveItems(folder.id);
+
+    const images = childItems.filter(
+      (i) => i.mimeType.startsWith("image/")
+    );
+
+    if (images.length === 0) continue; // skip empty folders
+
+    books.push({
+      id: folder.id,
+      title: folder.name,
+      coverImageUrl: `/api/books/${folder.id}/cover`,
+    });
   }
 
-  return allItems;
+  return books;
 };
+
+
