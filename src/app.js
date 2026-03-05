@@ -2,12 +2,20 @@ const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 
-const youtubeRoutes = require("./routes/youtube.routes");
-const driveRoutes = require("./routes/drive.routes");
-const driveAudioRoutes = require("./routes/drive.audio.routes");
-const youtubeShortsRoutes = require("./routes/shorts.routes");
-const sheetQuotesRoutes = require("./routes/sheets.routes");
-const booksPublicRoutes = require("./routes/books.public.routes");
+// const youtubeRoutes = require("./routes/youtube.routes");
+const youtubeAppRoutes = require("./routes/app/youtube.routes");
+const announcementsAppRoutes = require("./routes/app/announcements.routes");
+const quotesAppRoutes = require("./routes/app/quotes.routes");
+const booksAppRoutes = require("./routes/app/books.routes");
+const audioAppRoutes = require("./routes/app/audio.routes");
+const quickAppSectionRoutes = require("./routes/app/quickSection.routes");
+
+
+// const driveRoutes = require("./routes/drive.routes");
+// const driveAudioRoutes = require("./routes/drive.audio.routes");
+// const youtubeShortsRoutes = require("./routes/shorts.routes");
+// const sheetQuotesRoutes = require("./routes/sheets.routes");
+// const booksPublicRoutes = require("./routes/books.public.routes");
 
 const authRoutes = require("./routes/auth.routes");   // NEW
 const usersRoutes = require("./routes/admin/user.routes");
@@ -39,7 +47,7 @@ app.use((req, res, next) => {
 // 🌍 PUBLIC APP ROUTES (No Auth)
 // ------------------------------
 
-app.use("/api/books", booksPublicRoutes);
+// app.use("/api/books", booksPublicRoutes);
 
 
 // ------------------------------
@@ -64,11 +72,20 @@ app.use("/admin/youtube", requireAdmin, require("./routes/admin/youtubeMeta.rout
 
 app.use("/api", verifyHmac);
 
-app.use("/api/sheets", sheetQuotesRoutes);
-app.use("/api/drive", driveRoutes);
-app.use("/api/youtube", youtubeRoutes);
-app.use("/api/drive-audio", driveAudioRoutes);
-app.use("/api/youtube-shorts", youtubeShortsRoutes);
+app.use("/api/youtube", youtubeAppRoutes);
+app.use("/api/announcements", announcementsAppRoutes);
+app.use("/api/quotes", quotesAppRoutes);
+app.use("/api/books", booksAppRoutes);
+app.use("/api/audio", audioAppRoutes);
+app.use("/api/quick-sections", quickAppSectionRoutes);
+
+
+
+// app.use("/api/sheets", sheetQuotesRoutes);
+// app.use("/api/drive", driveRoutes);
+// // app.use("/api/youtube", youtubeRoutes);
+// app.use("/api/drive-audio", driveAudioRoutes);
+// app.use("/api/youtube-shorts", youtubeShortsRoutes);
 
 
 // ------------------------------
