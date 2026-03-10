@@ -1,9 +1,13 @@
 const axios = require("axios");
 const r2 = require("../../config/r2");
+const redis = require("../../redis/redisClient");
+
 const { PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 
 const WORKER = process.env.WORKER_BASE_URL;
 const worker = axios.create({ baseURL: WORKER });
+
+const CACHE_KEY = "app:announcements";
 
 
 // ------------------ GET ALL ------------------
@@ -15,12 +19,14 @@ exports.getAll = async () => {
 
 // ------------------ CREATE ------------------
 exports.create = async (data) => {
+
   const payload = {
     title: data.title,
     message_md: data.message,
-    status: data.is_active === "true" || data.is_active === true
-      ? "published"
-      : "draft",
+    status:
+      data.is_active === "true" || data.is_active === true
+        ? "published"
+        : "draft",
     publish_at: data.start_date || null,
     expire_at: data.end_date || null,
   };
@@ -31,12 +37,16 @@ exports.create = async (data) => {
     throw new Error("Worker did not return announcement ID");
   }
 
+  // 🔥 invalidate redis
+  await redis.del(CACHE_KEY);
+
   return res.data.id;
 };
 
 
 // ------------------ UPDATE TEXT FIELDS ------------------
 exports.update = async (id, data) => {
+
   const payload = {};
 
   if (data.title !== undefined)
@@ -58,14 +68,19 @@ exports.update = async (id, data) => {
         : "draft";
 
   await worker.put(`/announcements/${id}`, payload);
+
+  // 🔥 invalidate redis
+  await redis.del(CACHE_KEY);
 };
 
 
 // ------------------ UPLOAD NEW BANNER ------------------
 exports.uploadBanner = async (id, file) => {
+
   if (!file) throw new Error("No file provided");
 
   const extension = file.originalname.split(".").pop();
+
   const key = `announcements/announcement-${id}-${Date.now()}.${extension}`;
 
   await r2.send(
@@ -79,10 +94,12 @@ exports.uploadBanner = async (id, file) => {
 
   const publicUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
 
-  // Update DB with new banner URL
   await worker.put(`/announcements/${id}`, {
     banner_image_key: publicUrl,
   });
+
+  // 🔥 invalidate redis
+  await redis.del(CACHE_KEY);
 
   return publicUrl;
 };
@@ -90,7 +107,7 @@ exports.uploadBanner = async (id, file) => {
 
 // ------------------ REPLACE BANNER ------------------
 exports.replaceBanner = async (id, file) => {
-  // 1️⃣ Get old announcement
+
   const res = await worker.get(`/announcements/${id}`);
   const announcement = res.data;
 
@@ -100,9 +117,9 @@ exports.replaceBanner = async (id, file) => {
 
   const oldBanner = announcement.banner_image_key;
 
-  // 2️⃣ Delete old image if exists
   if (oldBanner) {
     try {
+
       const key = oldBanner.replace(`${process.env.R2_PUBLIC_URL}/`, "");
 
       await r2.send(
@@ -111,21 +128,26 @@ exports.replaceBanner = async (id, file) => {
           Key: key,
         })
       );
+
     } catch (err) {
       console.error("Failed to delete old banner:", err);
     }
   }
 
-  // 3️⃣ Upload new banner
-  return await exports.uploadBanner(id, file);
+  const result = await exports.uploadBanner(id, file);
+
+  // 🔥 invalidate redis
+  await redis.del(CACHE_KEY);
+
+  return result;
 };
 
 
 // ------------------ DELETE ------------------
 exports.remove = async (id) => {
+
   if (!id) throw new Error("Invalid announcement ID");
 
-  // 1️⃣ Get announcement
   const res = await worker.get(`/announcements/${id}`);
   const announcement = res.data;
 
@@ -135,9 +157,10 @@ exports.remove = async (id) => {
 
   const bannerUrl = announcement.banner_image_key;
 
-  // 2️⃣ Delete banner if exists
   if (bannerUrl) {
+
     try {
+
       const key = bannerUrl.replace(`${process.env.R2_PUBLIC_URL}/`, "");
 
       await r2.send(
@@ -146,13 +169,16 @@ exports.remove = async (id) => {
           Key: key,
         })
       );
+
     } catch (err) {
       console.error("Failed to delete banner:", err);
     }
   }
 
-  // 3️⃣ Delete DB record
   await worker.delete(`/announcements/${id}`);
+
+  // 🔥 invalidate redis
+  await redis.del(CACHE_KEY);
 
   return true;
 };

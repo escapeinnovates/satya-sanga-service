@@ -1,12 +1,22 @@
 const worker = require("./worker.service");
+const redis = require("../../redis/redisClient");
+
 const {
   PutObjectCommand,
   DeleteObjectCommand,
+  ListObjectsV2Command
 } = require("@aws-sdk/client-s3");
+
 const r2 = require("../../config/r2");
 const AdmZip = require("adm-zip");
 const slugify = require("slugify");
-const { ListObjectsV2Command } = require("@aws-sdk/client-s3");
+
+const QUICK_CACHE = "app:quick_sections";
+
+const clearQuickCache = async () => {
+  await redis.del(QUICK_CACHE);
+};
+
 
 // =====================================================
 // GET ALL
@@ -16,6 +26,7 @@ exports.getAllQuickSections = async () => {
   return await worker.get("/quick-access");
 };
 
+
 // =====================================================
 // GET SINGLE
 // =====================================================
@@ -24,6 +35,7 @@ exports.getQuickSectionById = async (id) => {
   if (!id) throw new Error("ID required");
   return await worker.get(`/quick-access/${id}`);
 };
+
 
 // =====================================================
 // CREATE
@@ -38,17 +50,20 @@ exports.createQuickSection = async ({
   mediaFile,
   thumbnailFile,
 }) => {
+
   if (!title || !content_type || !mediaFile) {
     throw new Error("Title, type and media file are required");
   }
 
   let mediaKey = null;
   let thumbnailKey = null;
-  let detectedImageType = null;   // 🔥 moved outside
-  let totalPages = null;          // 🔥 moved outside
+  let detectedImageType = null;
+  let totalPages = null;
 
   try {
+
     if (content_type === "book") {
+
       if (!mediaFile.originalname.toLowerCase().endsWith(".zip")) {
         throw new Error("Book must be ZIP file");
       }
@@ -75,13 +90,11 @@ exports.createQuickSection = async ({
       let pageIndex = 1;
 
       for (const file of imageFiles) {
+
         const ext = file.entryName.split(".").pop().toLowerCase();
 
-        if (!detectedImageType) {
-          detectedImageType = ext;
-        }
+        if (!detectedImageType) detectedImageType = ext;
 
-        // Enforce single format
         if (ext !== detectedImageType) {
           throw new Error("All book images must have same format");
         }
@@ -104,7 +117,10 @@ exports.createQuickSection = async ({
 
       totalPages = pageIndex - 1;
       mediaKey = baseFolder;
-    } else {
+    }
+
+    else {
+
       const ext = mediaFile.originalname.split(".").pop();
       const key = `quick-access/${content_type}/${Date.now()}.${ext}`;
 
@@ -120,7 +136,9 @@ exports.createQuickSection = async ({
       mediaKey = key;
     }
 
+
     if (thumbnailFile) {
+
       const ext = thumbnailFile.originalname.split(".").pop();
       const thumbKey = `quick-access/${content_type}/thumb-${Date.now()}.${ext}`;
 
@@ -136,7 +154,7 @@ exports.createQuickSection = async ({
       thumbnailKey = thumbKey;
     }
 
-    return await worker.post("/quick-access", {
+    const result = await worker.post("/quick-access", {
       title,
       content_type,
       media_key: mediaKey,
@@ -149,12 +167,18 @@ exports.createQuickSection = async ({
       total_pages: totalPages,
     });
 
+    await clearQuickCache();
+
+    return result;
+
   } catch (err) {
     throw new Error(err.message);
   }
 };
+
+
 // =====================================================
-// UPDATE (Media replace safe)
+// UPDATE
 // =====================================================
 
 exports.updateQuickSection = async ({
@@ -167,6 +191,7 @@ exports.updateQuickSection = async ({
   mediaFile,
   thumbnailFile,
 }) => {
+
   if (!id) throw new Error("ID required");
 
   const existing = await worker.get(`/quick-access/${id}`);
@@ -175,20 +200,17 @@ exports.updateQuickSection = async ({
   let mediaKey = existing.media_key;
   let thumbnailKey = existing.thumbnail_key;
 
-  // 🔥 Preserve existing metadata by default
   let detectedImageType = existing.image_type || null;
   let totalPages = existing.total_pages || null;
 
   try {
-    // =====================================================
-    // BOOK REPLACE
-    // =====================================================
+
     if (mediaFile && content_type === "book") {
+
       if (!mediaFile.originalname.toLowerCase().endsWith(".zip")) {
         throw new Error("Book must be ZIP file");
       }
 
-      // Delete old folder if exists
       if (existing.media_key) {
         await safeDeleteFolder(existing.media_key);
       }
@@ -218,16 +240,13 @@ exports.updateQuickSection = async ({
 
       let pageIndex = 1;
       detectedImageType = null;
-      totalPages = null;
 
       for (const file of imageFiles) {
+
         const ext = file.entryName.split(".").pop().toLowerCase();
 
-        if (!detectedImageType) {
-          detectedImageType = ext;
-        }
+        if (!detectedImageType) detectedImageType = ext;
 
-        // Enforce single format
         if (ext !== detectedImageType) {
           throw new Error("All book images must have same format");
         }
@@ -252,10 +271,8 @@ exports.updateQuickSection = async ({
       mediaKey = baseFolder;
     }
 
-    // =====================================================
-    // NORMAL FILE REPLACE (AUDIO / VIDEO)
-    // =====================================================
     else if (mediaFile) {
+
       const ext = mediaFile.originalname.split(".").pop();
       const newKey = `quick-access/${content_type}/${Date.now()}.${ext}`;
 
@@ -274,17 +291,15 @@ exports.updateQuickSection = async ({
 
       mediaKey = newKey;
 
-      // Reset book metadata if switching type
       if (existing.content_type === "book") {
         detectedImageType = null;
         totalPages = null;
       }
     }
 
-    // =====================================================
-    // THUMBNAIL REPLACE
-    // =====================================================
+
     if (thumbnailFile) {
+
       const ext = thumbnailFile.originalname.split(".").pop();
       const newThumb = `quick-access/${content_type}/thumb-${Date.now()}.${ext}`;
 
@@ -304,10 +319,8 @@ exports.updateQuickSection = async ({
       thumbnailKey = newThumb;
     }
 
-    // =====================================================
-    // UPDATE WORKER
-    // =====================================================
-    return await worker.put(`/quick-access/${id}`, {
+
+    const result = await worker.put(`/quick-access/${id}`, {
       title: title || existing.title,
       content_type: content_type || existing.content_type,
       media_key: mediaKey,
@@ -320,58 +333,73 @@ exports.updateQuickSection = async ({
       total_pages: content_type === "book" ? totalPages : null,
     });
 
+    await clearQuickCache();
+
+    return result;
+
   } catch (err) {
     throw new Error(err.message);
   }
 };
+
 
 // =====================================================
 // DELETE
 // =====================================================
 
 exports.deleteQuickSection = async (id) => {
+
   if (!id) throw new Error("ID required");
 
   const existing = await worker.get(`/quick-access/${id}`);
   if (!existing) throw new Error("Quick section not found");
 
   try {
-    // 🔥 BOOK FOLDER DELETE
+
     if (existing.content_type === "book" && existing.media_key) {
       await safeDeleteFolder(existing.media_key);
     }
 
-    // 🔥 NORMAL FILE DELETE
     else if (existing.media_key) {
       await safeDelete(existing.media_key);
     }
 
-    // Delete thumbnail
     if (existing.thumbnail_key) {
       await safeDelete(existing.thumbnail_key);
     }
 
-    // Delete DB record
-    return await worker.delete(`/quick-access/${id}`);
+    const result = await worker.delete(`/quick-access/${id}`);
+
+    await clearQuickCache();
+
+    return result;
+
   } catch (error) {
     throw new Error(error.message || "Quick section deletion failed");
   }
 };
 
+
 // =====================================================
-// REORDER (Bulk update)
+// REORDER
 // =====================================================
 
 exports.reorderQuickSection = async (items) => {
+
   if (!Array.isArray(items)) {
     throw new Error("Invalid reorder payload");
   }
 
-  return await worker.put("/quick-access/reorder/sort", items);
+  const result = await worker.put("/quick-access/reorder/sort", items);
+
+  await clearQuickCache();
+
+  return result;
 };
 
+
 // =====================================================
-// SAFE DELETE HELPER
+// SAFE DELETE
 // =====================================================
 
 async function safeDelete(key) {
@@ -388,7 +416,9 @@ async function safeDelete(key) {
 }
 
 async function safeDeleteFolder(prefix) {
+
   try {
+
     const listed = await r2.send(
       new ListObjectsV2Command({
         Bucket: process.env.R2_BUCKET,
@@ -396,11 +426,10 @@ async function safeDeleteFolder(prefix) {
       })
     );
 
-    if (!listed.Contents || listed.Contents.length === 0) {
-      return;
-    }
+    if (!listed.Contents || listed.Contents.length === 0) return;
 
     for (const file of listed.Contents) {
+
       await r2.send(
         new DeleteObjectCommand({
           Bucket: process.env.R2_BUCKET,
@@ -408,6 +437,7 @@ async function safeDeleteFolder(prefix) {
         })
       );
     }
+
   } catch (err) {
     console.error("R2 folder delete failed:", err.message);
   }

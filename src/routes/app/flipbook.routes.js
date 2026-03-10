@@ -2,13 +2,13 @@
 
 const express = require("express");
 const {
-  getBooks,
+  getBookById
 } = require("../../controller/app/books.controller");
 
 const router = express.Router();
 
-// GET ALL BOOKS (metadata list)
-router.get("/", getBooks);
 
+// GET BOOK + PAGES (flipbook data)
+router.get("/:id", getBookById);
 
 module.exports = router;

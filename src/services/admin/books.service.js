@@ -2,13 +2,30 @@ const axios = require("axios");
 const AdmZip = require("adm-zip");
 const slugify = require("slugify");
 const r2 = require("../../config/r2");
-const { PutObjectCommand } = require("@aws-sdk/client-s3");
-const { DeleteObjectCommand, ListObjectsV2Command, CopyObjectCommand } = require("@aws-sdk/client-s3");
+const redis = require("../../redis/redisClient");
+
+const {
+  PutObjectCommand,
+  DeleteObjectCommand,
+  CopyObjectCommand
+} = require("@aws-sdk/client-s3");
+
 const WORKER = process.env.WORKER_BASE_URL;
 
 const worker = axios.create({
   baseURL: WORKER,
 });
+
+const BOOKS_CACHE = "app:books";
+const BOOK_PREFIX = "app:book:";
+
+const clearBookCache = async (bookId = null) => {
+  await redis.del(BOOKS_CACHE);
+  if (bookId) {
+    await redis.del(`${BOOK_PREFIX}${bookId}`);
+  }
+};
+
 
 // =================================================
 // GET ALL BOOKS
@@ -18,6 +35,7 @@ exports.getAll = async () => {
   return res.data;
 };
 
+
 // =================================================
 // GET BOOK BY ID
 // =================================================
@@ -26,10 +44,12 @@ exports.getById = async (id) => {
   return res.data;
 };
 
+
 // =================================================
 // CREATE BOOK
 // =================================================
 exports.createBook = async (data, coverFile, zipFile) => {
+
   const folderKey = slugify(data.title, { lower: true, strict: true });
 
   const res = await worker.post("/books", {
@@ -42,8 +62,8 @@ exports.createBook = async (data, coverFile, zipFile) => {
 
   const bookId = res.data.id;
 
-  // Upload cover
   if (coverFile) {
+
     const ext = coverFile.originalname.split(".").pop();
     const coverKey = `books/${folderKey}/cover.${ext}`;
 
@@ -61,26 +81,31 @@ exports.createBook = async (data, coverFile, zipFile) => {
     });
   }
 
-  // Process ZIP
   if (zipFile) {
     await exports.processZip(bookId, folderKey, zipFile);
   }
 
+  await clearBookCache(bookId);
+
   return bookId;
 };
 
+
 // =================================================
-// UPDATE BOOK (NO FILES)
+// UPDATE BOOK
 // =================================================
 exports.updateBook = async (id, data) => {
   await worker.put(`/books/${id}`, data);
+  await clearBookCache(id);
   return { success: true };
 };
+
 
 // =================================================
 // PROCESS ZIP
 // =================================================
 exports.processZip = async (bookId, folderKey, zipFile) => {
+
   const zip = new AdmZip(zipFile.buffer);
   const entries = zip.getEntries();
 
@@ -94,6 +119,7 @@ exports.processZip = async (bookId, folderKey, zipFile) => {
   let pageNumber = 1;
 
   for (const file of imageFiles) {
+
     const ext = file.entryName.split(".").pop();
     const padded = String(pageNumber).padStart(3, "0");
     const fileName = `${folderKey}_${padded}.${ext}`;
@@ -121,7 +147,10 @@ exports.processZip = async (bookId, folderKey, zipFile) => {
   await worker.put(`/books/${bookId}`, {
     total_pages: imageFiles.length
   });
+
+  await clearBookCache(bookId);
 };
+
 
 // =================================================
 // GET BOOK PAGES
@@ -131,17 +160,16 @@ exports.getPages = async (bookId) => {
   return res.data;
 };
 
+
 // =================================================
 // UPDATE PAGE IMAGE
 // =================================================
 exports.updatePageImage = async (pageId, file) => {
+
   if (!file) throw new Error("No file uploaded");
 
   const pageRes = await worker.get(`/books/book-pages/${pageId}`);
-
   const page = pageRes.data;
-
-  if (!page) throw new Error("Page not found");
 
   const oldKey = page.image_url.replace(
     `${process.env.R2_PUBLIC_URL}/`,
@@ -149,14 +177,11 @@ exports.updatePageImage = async (pageId, file) => {
   );
 
   const folder = oldKey.split("/").slice(0, -1).join("/");
-
   const ext = file.originalname.split(".").pop().toLowerCase();
-
   const baseName = page.file_name.replace(/\.[^/.]+$/, "");
 
   const newKey = `${folder}/${baseName}_${Date.now()}.${ext}`;
 
-  // 1️⃣ Upload new image
   await r2.send(
     new PutObjectCommand({
       Bucket: process.env.R2_BUCKET,
@@ -168,10 +193,8 @@ exports.updatePageImage = async (pageId, file) => {
 
   const newUrl = `${process.env.R2_PUBLIC_URL}/${newKey}`;
 
-  // 2️⃣ Update DB
   await worker.put(`/books/book-pages/${pageId}`, { image_url: newUrl });
 
-  // 3️⃣ Delete old image AFTER DB success
   await r2.send(
     new DeleteObjectCommand({
       Bucket: process.env.R2_BUCKET,
@@ -179,17 +202,19 @@ exports.updatePageImage = async (pageId, file) => {
     })
   );
 
+  await clearBookCache(page.book_id);
+
   return { imageUrl: newUrl };
 };
+
 
 // =================================================
 // UPDATE PAGE META
 // =================================================
 exports.updatePageMeta = async (pageId, data) => {
+
   const pageRes = await worker.get(`/books/book-pages/${pageId}`);
   const page = pageRes.data;
-
-  if (!page) throw new Error("Page not found");
 
   const oldKey = page.image_url.replace(
     `${process.env.R2_PUBLIC_URL}/`,
@@ -199,10 +224,6 @@ exports.updatePageMeta = async (pageId, data) => {
   const ext = oldKey.split(".").pop();
   const folder = oldKey.split("/").slice(0, -1).join("/");
 
-  if (!data.file_name || data.file_name.trim() === "") {
-    throw new Error("Invalid file name");
-  }
-
   const cleanName = slugify(data.file_name, {
     lower: true,
     strict: true,
@@ -211,7 +232,6 @@ exports.updatePageMeta = async (pageId, data) => {
   const newFileName = `${cleanName}.${ext}`;
   const newKey = `${folder}/${newFileName}`;
 
-  // Copy in R2
   await r2.send(
     new CopyObjectCommand({
       Bucket: process.env.R2_BUCKET,
@@ -220,7 +240,6 @@ exports.updatePageMeta = async (pageId, data) => {
     })
   );
 
-  // Delete old object
   await r2.send(
     new DeleteObjectCommand({
       Bucket: process.env.R2_BUCKET,
@@ -230,26 +249,27 @@ exports.updatePageMeta = async (pageId, data) => {
 
   const newUrl = `${process.env.R2_PUBLIC_URL}/${newKey}`;
 
-  // ✅ Correct Worker endpoint
   await worker.put(`/books/book-pages/${pageId}`, {
     file_name: data.file_name,
     image_url: newUrl,
   });
 
+  await clearBookCache(page.book_id);
+
   return { success: true };
 };
+
+
 // =================================================
 // DELETE PAGE
 // =================================================
 exports.deletePage = async (id) => {
-  // 1. Get page from Worker
+
   const pageRes = await worker.get(`/books/book-pages/${id}`);
   const page = pageRes.data;
 
-  if (!page) throw new Error("Page not found");
-
-  // 2. Delete from R2 first
   if (page.image_url) {
+
     const key = page.image_url.replace(
       `${process.env.R2_PUBLIC_URL}/`,
       ""
@@ -261,43 +281,42 @@ exports.deletePage = async (id) => {
     }));
   }
 
-  // 3. Delete from DB
   await worker.delete(`/books/book-pages/${id}`);
+
+  await clearBookCache(page.book_id);
 
   return { success: true };
 };
+
+
 // =================================================
 // DELETE BOOK
 // =================================================
 exports.deleteBook = async (id) => {
+
   const bookRes = await worker.get(`/books/${id}`);
   const book = bookRes.data;
 
-  if (!book) throw new Error("Book not found");
-
-  // Get pages
   const pagesRes = await worker.get(`/books/${id}/pages`);
   const pages = pagesRes.data || [];
 
-  // Delete page images
   for (const page of pages) {
-    if (page.image_url) {
-      const key = page.image_url.replace(
-        `${process.env.R2_PUBLIC_URL}/`,
-        ""
-      );
 
-      await r2.send(
-        new DeleteObjectCommand({
-          Bucket: process.env.R2_BUCKET,
-          Key: key,
-        })
-      );
-    }
+    const key = page.image_url.replace(
+      `${process.env.R2_PUBLIC_URL}/`,
+      ""
+    );
+
+    await r2.send(
+      new DeleteObjectCommand({
+        Bucket: process.env.R2_BUCKET,
+        Key: key,
+      })
+    );
   }
 
-  // Delete cover
   if (book.cover_url) {
+
     const coverKey = book.cover_url.replace(
       `${process.env.R2_PUBLIC_URL}/`,
       ""
@@ -311,22 +330,24 @@ exports.deleteBook = async (id) => {
     );
   }
 
-  // Soft delete in Worker
   await worker.delete(`/books/${id}`);
+
+  await clearBookCache(id);
 
   return { success: true };
 };
 
+
+// =================================================
+// UPLOAD MULTIPLE PAGES
+// =================================================
 exports.uploadMultiplePages = async (bookId, files) => {
-  // 1️⃣ Get book to read folder_key
+
   const bookRes = await worker.get(`/books/${bookId}`);
   const book = bookRes.data;
 
-  if (!book) throw new Error("Book not found");
-
   const folderKey = book.folder_key;
 
-  // 2️⃣ Get current pages
   const pagesRes = await worker.get(`/books/${bookId}/pages`);
   const currentPages = pagesRes.data || [];
 
@@ -335,12 +356,12 @@ exports.uploadMultiplePages = async (bookId, files) => {
   const pagesPayload = [];
 
   for (const file of files) {
+
     const ext = file.originalname.split(".").pop().toLowerCase();
 
     const fileName = `${folderKey}_${String(pageNumber).padStart(3, "0")}.${ext}`;
     const key = `books/${folderKey}/${fileName}`;
 
-    // Upload to R2
     await r2.send(
       new PutObjectCommand({
         Bucket: process.env.R2_BUCKET,
@@ -360,35 +381,29 @@ exports.uploadMultiplePages = async (bookId, files) => {
     pageNumber++;
   }
 
-  // 3️⃣ Bulk insert
   await worker.post(`/books/${bookId}/pages/bulk`, {
     pages: pagesPayload,
   });
 
+  await clearBookCache(bookId);
+
   return { success: true };
 };
 
+
+// =================================================
+// UPDATE COVER
+// =================================================
 exports.updateCover = async (bookId, file) => {
-  if (!file) throw new Error("No file uploaded");
 
   const bookRes = await worker.get(`/books/${bookId}`);
   const book = bookRes.data;
 
-  if (!book) throw new Error("Book not found");
-
   const folderKey = book.folder_key;
-
-  if (!folderKey) throw new Error("Invalid folder key");
-
-  // Validate file type
-  if (!file.mimetype.startsWith("image/")) {
-    throw new Error("Invalid file type");
-  }
 
   const ext = file.originalname.split(".").pop().toLowerCase();
   const newKey = `books/${folderKey}/cover_${Date.now()}.${ext}`;
 
-  // 1️⃣ Upload new cover first
   await r2.send(new PutObjectCommand({
     Bucket: process.env.R2_BUCKET,
     Key: newKey,
@@ -398,19 +413,19 @@ exports.updateCover = async (bookId, file) => {
 
   const newUrl = `${process.env.R2_PUBLIC_URL}/${newKey}`;
 
-  // 2️⃣ Update DB
   await worker.put(`/books/${bookId}`, {
     cover_url: newUrl
   });
 
-  // 3️⃣ Delete old cover ONLY IF different
   if (book.cover_url) {
+
     const oldKey = book.cover_url.replace(
       `${process.env.R2_PUBLIC_URL}/`,
       ""
     );
 
     if (oldKey !== newKey) {
+
       await r2.send(new DeleteObjectCommand({
         Bucket: process.env.R2_BUCKET,
         Key: oldKey,
@@ -418,12 +433,22 @@ exports.updateCover = async (bookId, file) => {
     }
   }
 
+  await clearBookCache(bookId);
+
   return newUrl;
 };
 
+
+// =================================================
+// REORDER PAGES
+// =================================================
 exports.reorderPages = async (bookId, pages) => {
+
   await worker.put(`/books/${bookId}/pages/reorder`, {
     pages
   });
+
+  await clearBookCache(bookId);
+
   return { success: true };
 };

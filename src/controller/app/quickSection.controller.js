@@ -22,3 +22,35 @@ exports.getQuickSections = async (req, res) => {
   }
 
 };
+
+// ---------------- GET BOOK BY ID ----------------
+exports.getBookById = async (req, res) => {
+  try {
+
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Book ID is required"
+      });
+    }
+
+    const data = await service.getBookById(id);
+
+    res.json({
+      success: true,
+      data
+    });
+
+  } catch (err) {
+
+    console.error("GET BOOK ERROR:", err);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch book"
+    });
+
+  }
+};

@@ -21,6 +21,7 @@ const authRoutes = require("./routes/auth.routes");   // NEW
 const usersRoutes = require("./routes/admin/user.routes");
 const announcementsRoutes = require("./routes/admin/announcements.routes");
 const booksRoutes = require("./routes/admin/books.routes");
+const flipbook = require("./routes/app/flipbook.routes");
 const audioManagerRoutes = require("./routes/admin/audioManager.routes");
 const quickSectionroutes = require("./routes/admin/quickSection.routes");
 
@@ -30,7 +31,10 @@ const { requireAdmin } = require("./middleware/auth"); // NEW
 const app = express();
 
 app.use(cors({
-  origin: "http://localhost:5173", // admin frontend
+  origin: [
+    "http://localhost:5173",
+    "http://192.168.31.207:5173"
+  ],
   credentials: true
 }));
 
@@ -53,6 +57,8 @@ app.use((req, res, next) => {
 // ------------------------------
 // 🔐 ADMIN AUTH ROUTES
 // ------------------------------
+app.use("/api/flipbook", flipbook);
+app.use("/api/quick/flipbook", quickAppSectionRoutes);
 
 app.use("/auth", authRoutes);
 
@@ -74,7 +80,7 @@ app.use("/api", verifyHmac);
 
 app.use("/api/youtube", youtubeAppRoutes);
 app.use("/api/announcements", announcementsAppRoutes);
-app.use("/api/quotes", quotesAppRoutes);
+app.use("/api/quotes", quotesAppRoutes);  
 app.use("/api/books", booksAppRoutes);
 app.use("/api/audio", audioAppRoutes);
 app.use("/api/quick-sections", quickAppSectionRoutes);

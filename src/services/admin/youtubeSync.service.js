@@ -1,10 +1,19 @@
 const worker = require("../../services/admin/worker.service");
+const redis = require("../../redis/redisClient");
+
 const {
   fetchPlaylists,
   fetchPlaylistVideos
 } = require("../youtube.service");
 
 const { CHANNEL_ID } = require("../../config/env");
+
+const YOUTUBE_CACHE = "app:youtube";
+
+const clearYoutubeCache = async () => {
+  await redis.del(YOUTUBE_CACHE);
+};
+
 
 /* ======================================================
    MAIN SYNC FUNCTION
@@ -17,8 +26,6 @@ exports.syncYoutubeToWorker = async () => {
     console.log("Starting YouTube Sync...");
 
     const playlists = await fetchPlaylists();
-
-    /* FETCH ALL PLAYLIST VIDEOS IN PARALLEL */
 
     const payload = await Promise.all(
 
@@ -54,9 +61,10 @@ exports.syncYoutubeToWorker = async () => {
 
     );
 
-    /* SEND DATA TO WORKER */
-
     await worker.post("/youtube-sync", payload);
+
+    // 🔥 CLEAR REDIS CACHE
+    await clearYoutubeCache();
 
     console.log("YouTube sync completed");
 
