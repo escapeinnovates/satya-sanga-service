@@ -89,7 +89,7 @@ app.use("/api/quick-sections", quickAppSectionRoutes);
 
 // app.use("/api/sheets", sheetQuotesRoutes);
 // app.use("/api/drive", driveRoutes);
-// // app.use("/api/youtube", youtubeRoutes);
+// // app.use("/api/youtube", youtubeRoutes);pm2 logs satyasang-api-local
 // app.use("/api/drive-audio", driveAudioRoutes);
 // app.use("/api/youtube-shorts", youtubeShortsRoutes);
 

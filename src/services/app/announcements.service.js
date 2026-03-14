@@ -21,6 +21,7 @@ exports.getAnnouncements = async () => {
   const data = await worker.get("/app-announcements");
 
   const result = data?.data || data;
+console.log("Fetched from worker:", result);
 
   // 3️⃣ store in redis
   await redis.set(
